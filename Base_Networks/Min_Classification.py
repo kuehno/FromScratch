@@ -82,7 +82,6 @@ def loss_fun(probs, targets):
 
 def backward(probs, hidden, targets):
     samples = len(probs)
-
     dinputs = probs.copy()
 
     # Calculate gradient

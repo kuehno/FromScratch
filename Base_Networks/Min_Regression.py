@@ -2,9 +2,9 @@ import numpy as np
 import pickle
 import time
 from random import uniform
-import torch
-from torchvision import datasets
-import torchvision
+import pandas as pd
+from sklearn import preprocessing
+import matplotlib.pyplot as plt
 
 
 class bcolors:
@@ -19,15 +19,16 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 
-def prepro(x):
-    """ preprocessing for images only"""
-    return x.astype(np.float).ravel() / 255
+def create_sequences(data, seq_length):
+    xs = []
+    ys = []
+    for i in range(len(data)-seq_length-1):
+        x = data[i:(i+seq_length)]
+        y = data[i+seq_length]
+        xs.append(x)
+        ys.append(y)
 
-
-def softmax(x):
-    exp_vals = np.exp(x - np.max(x, axis=1, keepdims=True))
-    probs = exp_vals / np.sum(exp_vals, axis=1, keepdims=True)
-    return probs
+    return np.array(xs), np.array(ys)
 
 
 def relu(x):
@@ -57,35 +58,24 @@ def forward(inputs):
     z1 = relu(y1)
     y2 = np.dot(z1, model['W2']) + model['Bias_W2']
     z2 = relu(y2)
-    y3 = np.dot(z2, model['W3']) + model['Bias_W3']
-    probs = softmax(y3)
+    values = np.dot(z2, model['W3']) + model['Bias_W3']
 
-    return {'inputs': inputs, 'y1': y1, 'z1': z1, 'y2': y2, 'z2': z2}, probs
+    return {'inputs': inputs, 'y1': y1, 'z1': z1, 'y2': y2, 'z2': z2}, values
 
 
-def loss_fun(probs, targets):
-    samples = len(probs)
-
-    if len(targets.shape) == 1:
-        target_preds = probs[range(samples), targets]
-
-    # Mask for one-hot encoded labels
-    elif len(targets.shape) == 2:
-        target_preds = np.sum(probs * targets, axis=1)
-
-    # Losses
-    negative_log_probs = -np.log(target_preds)
-    loss = np.mean(negative_log_probs)
-
+def loss_fun(values, targets):
+    loss = np.mean((targets - values) ** 2)
     return loss
 
 
-def backward(probs, hidden, targets):
-    samples = len(probs)
-    dinputs = probs.copy()
+def backward(values, hidden, targets):
+    samples = len(values)
+    outputs = len(values[0])
+
+    dinputs = values.copy()
 
     # Calculate gradient
-    dinputs[range(samples), targets] -= 1
+    dinputs = -2 * (targets - dinputs) / outputs
     # Normalize gradient
     dinputs3 = dinputs / samples
 
@@ -133,11 +123,11 @@ def check_grads(model, inputs, targets, grads):
             # evaluate cost at [x + delta] and [x - delta]
             old_val = param.flat[ri]
             param.flat[ri] = old_val + delta
-            _, probs = forward(inputs)
-            cg0 = loss_fun(probs, targets)
+            _, values = forward(inputs)
+            cg0 = loss_fun(values, targets)
             param.flat[ri] = old_val - delta
-            _, probs = forward(inputs)
-            cg1 = loss_fun(probs, targets)
+            _, values = forward(inputs)
+            cg1 = loss_fun(values, targets)
             param.flat[ri] = old_val  # reset old value for this parameter
             # fetch both numerical and analytic gradient
             grad_analytic = dparam.flat[ri]
@@ -157,9 +147,10 @@ def check_grads(model, inputs, targets, grads):
 
 
 """ Model Params """
-hidden_units = 100
-in_features = 28*28
-out_features = 10
+seq_len = 10
+hidden_units = 200
+in_features = seq_len
+out_features = 1
 
 """ Weight Initialization """
 W1 = np.random.randn(hidden_units, in_features) / np.sqrt(in_features) # Xavier Initialization
@@ -175,44 +166,62 @@ Bias_W3 = np.array([np.zeros(out_features)])
 model = {'W1': W1, 'Bias_W1': Bias_W1, 'W2': W2, 'Bias_W2': Bias_W2, 'W3': W3, 'Bias_W3': Bias_W3}
 grad_buffer = init_grad_buffer(model)
 
-train_loader = torch.utils.data.DataLoader(datasets.MNIST('/home/niklaskuehn/Desktop/Python and Machine Learning/FromScratch/Datasets/MNIST Digits/', train=True, transform=torchvision.transforms.ToTensor()), batch_size=64)
+dataset = pd.read_csv('datasets/DummyStockData.csv').to_numpy()
+asks = dataset[:, 1]
+
+length = len(asks)
+last_10pct = np.array(length * 0.05, dtype=np.int)
+
+train_data = asks[:length-last_10pct]
+test_data = asks[length-last_10pct:]
+
+scaler = preprocessing.MinMaxScaler()
+test_scaler = preprocessing.MinMaxScaler()
+
+train_data = scaler.fit_transform(np.expand_dims(train_data, axis=1))
+test_data = test_scaler.fit_transform(np.expand_dims(test_data, axis=1))
+
+X_train, y_train = create_sequences(train_data, seq_length=seq_len)
+X_test, y_test = create_sequences(test_data, seq_length=seq_len)
+
+X_train = X_train.reshape(X_train.shape[0], X_train.shape[1])
+X_test = X_test.reshape(X_test.shape[0], X_test.shape[1])
 
 """ Training Params """
-EPOCHS = 5
-lr = 0.01
+EPOCHS = 1000
+lr = 0.002
 smooth_acc = 0
 smooth_loss = 0
 check_gradients = False
 step = 0
-update_every = 10
+update_every = 1
+accuracy_precision = np.std(y_train) / 10
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
 
 for epoch in range(EPOCHS):
-    for batch_idx, (X_train, y_train) in enumerate(train_loader):
-        X_train = np.array(X_train).reshape(-1, 28*28)
-        y_train = np.array(y_train)
-
         if check_gradients:
-            hidden, probs = forward(X_train)
-            grads = backward(probs, hidden, y_train)
+            hidden, values = forward(X_train)
+            grads = backward(values, hidden, y_train)
             print(f'Checking gradient implementation')
             difference = check_grads(model, X_train, y_train, grads)
             check_gradients = False
             time.sleep(5)
 
-        hidden, probs = forward(X_train)
-        loss = loss_fun(probs, y_train)
-        preds = np.argmax(probs, axis=1)
-        if len(y_train.shape) == 2:
-            y_train = np.argmax(y_train, axis=1)
+        hidden, values = forward(X_train)
+        loss = loss_fun(values, y_train)
 
-        accuracy = np.mean(preds==y_train)
-        smooth_acc = smooth_acc * 0.99 + accuracy * 0.01
-        smooth_loss = smooth_loss * 0.99 + loss * 0.01
+        accuracy = np.mean(np.absolute(values - y_train) <
+                                 accuracy_precision)
+        if epoch == 0:
+            smooth_loss = loss
+            smooth_acc = accuracy
+        else:
+            smooth_loss = smooth_loss * 0.99 + loss * 0.01
+            smooth_acc = smooth_acc * 0.99 + accuracy * 0.01
 
-        grads = backward(probs, hidden, y_train)
+        grads = backward(values, hidden, y_train)
 
         for k, v in grad_buffer.items():
             grad_buffer[k] += grads[k]
@@ -228,21 +237,21 @@ for epoch in range(EPOCHS):
               f'smooth acc: {smooth_acc:.3f}, ' +
               f'smooth loss: {smooth_loss:.3f}')
 
-test_loader = torch.utils.data.DataLoader(datasets.MNIST('/home/niklaskuehn/Desktop/Python and Machine Learning/FromScratch/Datasets/MNIST Digits/', train=False, transform=torchvision.transforms.ToTensor()), batch_size=10000)
+plt.plot(values)
+plt.plot(y_train)
+plt.show()
 
 
 print(f"{bcolors.OKBLUE}\nTesting the Model{bcolors.ENDC}")
 time.sleep(2)
 
-for batch_idx, (X_test, y_test) in enumerate(test_loader):
-    X_test = np.array(X_test).reshape(-1, 28*28)
-    y_test = np.array(y_test)
+hidden, test_values = forward(X_test)
+loss = loss_fun(test_values, y_test)
+accuracy = np.mean(np.absolute(test_values - y_test) <
+                   accuracy_precision)
 
-    hidden, probs = forward(X_test)
-    loss = loss_fun(probs, y_test)
-    preds = np.argmax(probs, axis=1)
-    if len(y_test.shape) == 2:
-        y_train = np.argmax(y_test, axis=1)
+print(f"\ntesting acc: {accuracy:.3f}, loss: {loss:.3f}")
 
-    accuracy = np.mean(preds==y_test)
-    print(f"\ntesting acc: {accuracy:.3f}, loss: {loss:.3f}")
+plt.plot(test_values)
+plt.plot(y_test)
+plt.show()

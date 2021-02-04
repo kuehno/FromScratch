@@ -1,4 +1,5 @@
 import numpy as np
+import time
 from random import uniform
 import cv2
 
@@ -51,16 +52,13 @@ class Player:
 
 
 class GameEnvironment:
-    SIZE = 6
+    SIZE = 10
     PLAYER_N = 175
     PLAYER_N_1D = 50
     PLAYER_POS = (0, 0)
     GOAL_N = 100
-    GOAL_N_1D = 150
     GOAL_POS = (SIZE - 1, SIZE - 1)
-    #ENEMY1_POS = (np.random.randint(1, 4), np.random.randint(1, 4))
-    #ENEMY2_POS = (np.random.randint(1, 4), np.random.randint(1, 4))
-    NUM_ENEMIES = 0
+    NUM_ENEMIES = 0 # change to make the environment contain enemies
     positions = {}
     for i in range(NUM_ENEMIES):
         positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
@@ -74,8 +72,6 @@ class GameEnvironment:
         self.enemies = {}
         for i in range(self.NUM_ENEMIES):
             self.enemies[f'Enemy{i}'] = Player(self.positions[f'{i}'])
-        #self.ENEMY1_POS = (np.random.randint(1, 4), np.random.randint(1, 4))
-        #self.ENEMY2_POS = (np.random.randint(1, 4), np.random.randint(1, 4))
         self.episode_step = 0
 
         obs = self.get_observation()
@@ -103,7 +99,7 @@ class GameEnvironment:
             reward = 0.0
             done = False
 
-        if self.episode_step >= 50:
+        if self.episode_step >= 200:
             reward = -1.0
             done = True
 
@@ -112,7 +108,7 @@ class GameEnvironment:
     def get_observation(self):
         env = np.zeros((self.SIZE, self.SIZE), dtype=np.float)
 
-        env[self.GOAL_POS] = self.GOAL_N_1D
+        env[self.GOAL_POS] = self.GOAL_N
         for i in range(self.NUM_ENEMIES):
             env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
         env[self.player.x][self.player.y] = self.PLAYER_N_1D
@@ -129,7 +125,7 @@ class GameEnvironment:
 
         img = cv2.resize(env, (400, 400), interpolation=cv2.INTER_AREA)
         cv2.imshow("Own Network Env", img)
-        cv2.waitKey(10)
+        cv2.waitKey(20)
 
 
 def discount_rewards(r, gamma):
@@ -306,6 +302,10 @@ def check_grads(model, inputs, targets, rewards, grads):
 
 
 env = GameEnvironment()
+print(f"{bcolors.OKGREEN}\nInitial game state{bcolors.ENDC}")
+env.reset()
+env.render()
+time.sleep(2)
 
 """ Model Params """
 hidden_units = 64
@@ -328,13 +328,13 @@ grad_buffer = init_grad_buffer(model)
 
 """ Training Params """
 EPOCHS = 5000
-lr = 0.02
+lr = 0.005
 smooth_rewards = 0
 smooth_loss = 0
 step = 0
-update_every = 1
+update_every = 10
 check_gradients = False
-render = False
+render = True
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
@@ -366,6 +366,9 @@ for epoch in range(EPOCHS):
     ep_probs = np.vstack(ep_probs)
 
     rewards = discount_rewards(rewards, gamma=0.9)
+    # reward normalization
+    rewards -= np.mean(rewards)
+    rewards /= np.std(rewards)
 
     if check_gradients:
         hidden, probs = forward(memory['inputs'])

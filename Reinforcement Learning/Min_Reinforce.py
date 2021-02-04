@@ -257,6 +257,8 @@ def check_grads(model, inputs, targets, rewards, grads):
         delta -- tiny shift to the input to compute approximated gradient with formula(1)
         Returns:
         difference -- difference (2) between the approximated gradient and the backward propagation gradient
+
+        Inspired by Andrej Karpathy - min-char-rnn -> https://gist.github.com/karpathy/d4dee566867f8291f086
     """
     param_keys, params, gradients, grad_keys = [], [], [], []
     for key, item in model.items():
@@ -275,30 +277,25 @@ def check_grads(model, inputs, targets, rewards, grads):
         print(name)
         for i in range(num_checks):
             ri = int(uniform(0, param.size))
-            # evaluate cost at [x + delta] and [x - delta]
             old_val = param.flat[ri]
             param.flat[ri] = old_val + delta
             _, probs = forward(inputs)
-            cg0 = loss_fun(probs, targets, rewards)
+            loss_plus = loss_fun(probs, targets, rewards)
             param.flat[ri] = old_val - delta
             _, probs = forward(inputs)
-            cg1 = loss_fun(probs, targets, rewards)
-            param.flat[ri] = old_val  # reset old value for this parameter
-            # fetch both numerical and analytic gradient
+            loss_minus = loss_fun(probs, targets, rewards)
+            param.flat[ri] = old_val  # reset old value
             grad_analytic = dparam.flat[ri]
-            grad_numerical = (cg0 - cg1) / (2 * delta)
+            grad_numerical = (loss_plus - loss_minus) / (2 * delta)
             if grad_analytic == 0.0 and grad_numerical == 0.0:
                 rel_error = 0.0
             else:
                 rel_error = abs(grad_analytic - grad_numerical) / abs(grad_numerical + grad_analytic)
-            # rel_error should be on order of 1e-7 or less
 
             if rel_error > delta:
-                print("\033[93m" + "There might be a mistake in backward propagation! difference = " + str(
-                    rel_error) + "\033[0m")
+                print(f"{bcolors.FAIL}There might be a mistake in backward propagation! difference = {rel_error}{bcolors.ENDC}")
             else:
-                print("\033[92m" + "Your backward propagation works perfectly fine! difference = " + str(
-                    rel_error) + "\033[0m")
+                print(f"{bcolors.OKGREEN}Your backward propagation works perfectly fine! difference = {rel_error}{bcolors.ENDC}")
 
 
 env = GameEnvironment()
@@ -333,7 +330,7 @@ smooth_rewards = 0
 smooth_loss = 0
 step = 0
 update_every = 10
-check_gradients = False
+check_gradients = True
 render = True
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")

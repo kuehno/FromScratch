@@ -343,7 +343,7 @@ env.render()
 time.sleep(2)
 
 """ Model Params """
-hidden_units = 100
+hidden_units = 64
 # in_features = env.SIZE * env.SIZE
 in_features = 4
 out_features = 2
@@ -367,7 +367,7 @@ grad_buffer = init_grad_buffer(model)
 
 """ Training Params """
 EPOCHS = 50000
-lr = 0.001
+lr = 0.002
 epsilon = 0.5
 epsilon_decay = 0.99
 smooth_rewards = 0
@@ -412,7 +412,7 @@ for epoch in range(EPOCHS):
         new_targets.append(new_action)
         rewards.append(reward)
 
-        if smooth_rewards > 180 and render:
+        if smooth_rewards > 199 and render:
             env.render()
 
         obs = new_obs
@@ -462,7 +462,7 @@ for epoch in range(EPOCHS):
     grads = backward(actual_qs, memory, target_qs)
 
     for k, v in grad_buffer.items():
-        # grads[k] = np.clip(grads[k], -5, 5)
+        grads[k] = np.clip(grads[k], -1, 1)
         grad_buffer[k] += grads[k]
 
     step += 1

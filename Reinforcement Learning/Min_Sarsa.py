@@ -2,7 +2,6 @@ import numpy as np
 import time
 from random import uniform
 import cv2
-import gym
 
 
 class bcolors:
@@ -53,13 +52,13 @@ class Player:
 
 
 class GameEnvironment:
-    SIZE = 5
+    SIZE = 6
     PLAYER_N = 175
     PLAYER_N_1D = 50
     PLAYER_POS = (0, 0)
     GOAL_N = 100
     GOAL_POS = (SIZE - 1, SIZE - 1)
-    NUM_ENEMIES = 0 # change to make the environment contain enemies
+    NUM_ENEMIES = 2 # change to make the environment contain enemies
     positions = {}
     for i in range(NUM_ENEMIES):
         positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
@@ -100,7 +99,7 @@ class GameEnvironment:
             reward = 0.0
             done = False
 
-        if self.episode_step >= 100:
+        if self.episode_step >= 200:
             reward = -1.0
             done = True
 
@@ -335,8 +334,7 @@ def check_grads(model, inputs, targets, new_ep_values, new_targets, rewards, gra
                 print(f"{bcolors.OKGREEN}Your backward propagation works perfectly fine! difference = {rel_error}{bcolors.ENDC}")
 
 
-# env = GameEnvironment()
-env = gym.make('CartPole-v0')
+env = GameEnvironment()
 print(f"{bcolors.OKGREEN}\nInitial game state{bcolors.ENDC}")
 env.reset()
 env.render()
@@ -344,9 +342,8 @@ time.sleep(2)
 
 """ Model Params """
 hidden_units = 64
-# in_features = env.SIZE * env.SIZE
-in_features = 4
-out_features = 2
+in_features = env.SIZE * env.SIZE
+out_features = 4
 
 """ Weight Initialization """
 W1 = np.random.randn(hidden_units, in_features) / np.sqrt(in_features) # Xavier Initialization
@@ -356,7 +353,7 @@ W2 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units) # Xavie
 W2 = W2.T
 Bias_W2 = np.array([np.zeros(hidden_units)])
 W3 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
-W3 = W2.T
+W3 = W3.T
 Bias_W3 = np.array([np.zeros(hidden_units)])
 W4 = np.random.randn(out_features, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
 W4 = W4.T
@@ -367,9 +364,9 @@ grad_buffer = init_grad_buffer(model)
 
 """ Training Params """
 EPOCHS = 50000
-lr = 0.002
-epsilon = 0.5
-epsilon_decay = 0.99
+lr = 0.0002
+epsilon = 0.9
+epsilon_decay = 0.999
 smooth_rewards = 0
 smooth_loss = 0
 step = 0
@@ -387,7 +384,7 @@ for epoch in range(EPOCHS):
     targets, new_targets, rewards, ep_values, new_ep_values = [], [], [], [], []
     ep_rewards = 0
     done = False
-    obs = env.reset()
+    obs = prepro(env.reset())
     while not done:
         hidden, values = forward(obs)
         ep_values.append(values)
@@ -395,10 +392,10 @@ for epoch in range(EPOCHS):
         if np.random.rand() > epsilon:
             action = np.argmax(values)
         else:
-            action = np.random.randint(0, 2)
+            action = np.random.randint(0, 4)
 
-        new_obs, reward, done, _ = env.step(action)
-        new_obs = new_obs
+        new_obs, reward, done = env.step(action)
+        new_obs = prepro(new_obs)
         ep_rewards += reward
 
         _, new_values = forward(new_obs)
@@ -406,13 +403,13 @@ for epoch in range(EPOCHS):
         if np.random.rand() > epsilon:
             new_action = np.argmax(new_values)
         else:
-            new_action = np.random.randint(0, 2)
+            new_action = np.random.randint(0, 4)
 
         targets.append(action)
         new_targets.append(new_action)
         rewards.append(reward)
 
-        if smooth_rewards > 199 and render:
+        if smooth_rewards > 0.99 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
             env.render()
 
         obs = new_obs
@@ -425,7 +422,7 @@ for epoch in range(EPOCHS):
     ep_values = np.vstack(ep_values)
     new_ep_values = np.vstack(new_ep_values)
 
-    rewards = discount_rewards(rewards, gamma=0.99)
+    # rewards = discount_rewards(rewards, gamma=0.99)
     # # reward normalization
     # rewards -= np.mean(rewards)
     # rewards /= np.std(rewards)
@@ -456,8 +453,12 @@ for epoch in range(EPOCHS):
         time.sleep(5)
 
     loss = loss_fun(actual_qs, target_qs)
-    smooth_rewards = smooth_rewards * 0.99 + ep_rewards * 0.01
-    smooth_loss = smooth_loss * 0.99 + loss * 0.01
+    if epoch == 0:
+        smooth_rewards = ep_rewards
+        smooth_loss = loss
+    else:
+        smooth_rewards = smooth_rewards * 0.99 + ep_rewards * 0.01
+        smooth_loss = smooth_loss * 0.99 + loss * 0.01
 
     grads = backward(actual_qs, memory, target_qs)
 

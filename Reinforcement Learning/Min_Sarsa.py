@@ -224,9 +224,11 @@ def forward(inputs):
     y2 = np.dot(z1, model['W2']) + model['Bias_W2']
     z2 = relu(y2)
     y3 = np.dot(z2, model['W3']) + model['Bias_W3']
-    values = y3
+    z3 = relu(y3)
+    y4 = np.dot(z3, model['W4']) + model['Bias_W4']
+    values = y4
 
-    return {'inputs': inputs, 'y1': y1, 'y2': y2, 'z1': z1, 'z2': z2}, values
+    return {'inputs': inputs, 'y1': y1, 'y2': y2, 'y3': y3, 'z1': z1, 'z2': z2, 'z3': z3}, values
 
 
 def loss_fun(actual_qs, target_qs):
@@ -241,10 +243,14 @@ def backward(actual_qs, hidden, target_qs):
     # Calculate gradient
     dinputs = -2 * (target_qs - actual_qs) / outputs
     # Normalize gradient
-    dinputs3 = dinputs / samples
+    dinputs4 = dinputs / samples
 
     """ Calculate gradients in regard to inputs, weights and biases """
 
+    dW4 = np.dot(hidden['z3'].T, dinputs4)
+    db4 = np.sum(dinputs4, axis=0, keepdims=True)
+    dinputs3 = np.dot(dinputs4, W4.T)
+    dinputs3 = drelu(hidden['y3'], dinputs3)
     dW3 = np.dot(hidden['z2'].T, dinputs3)
     db3 = np.sum(dinputs3, axis=0, keepdims=True)
     dinputs2 = np.dot(dinputs3, W3.T)
@@ -256,7 +262,7 @@ def backward(actual_qs, hidden, target_qs):
     dW1 = np.dot(hidden['inputs'].T, dinputs1)
     db1 = np.sum(dinputs1, axis=0, keepdims=True)
 
-    return {'W1': dW1, 'Bias_W1': db1, 'W2': dW2, 'Bias_W2': db2, 'W3': dW3, 'Bias_W3': db3}
+    return {'W1': dW1, 'Bias_W1': db1, 'W2': dW2, 'Bias_W2': db2, 'W3': dW3, 'Bias_W3': db3, 'W4': dW4, 'Bias_W4': db4}
 
 
 def check_grads(model, inputs, targets, new_ep_values, new_targets, rewards, grads):
@@ -349,11 +355,14 @@ Bias_W1 = np.array([np.zeros(hidden_units)])
 W2 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
 W2 = W2.T
 Bias_W2 = np.array([np.zeros(hidden_units)])
-W3 = np.random.randn(out_features, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
-W3 = W3.T
-Bias_W3 = np.array([np.zeros(out_features)])
+W3 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
+W3 = W2.T
+Bias_W3 = np.array([np.zeros(hidden_units)])
+W4 = np.random.randn(out_features, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
+W4 = W4.T
+Bias_W4 = np.array([np.zeros(out_features)])
 
-model = {'W1': W1, 'Bias_W1': Bias_W1, 'W2': W2, 'Bias_W2': Bias_W2, 'W3': W3, 'Bias_W3': Bias_W3}
+model = {'W1': W1, 'Bias_W1': Bias_W1, 'W2': W2, 'Bias_W2': Bias_W2, 'W3': W3, 'Bias_W3': Bias_W3, 'W4': W4, 'Bias_W4': Bias_W4}
 grad_buffer = init_grad_buffer(model)
 
 """ Training Params """
@@ -374,7 +383,7 @@ print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
 
 for epoch in range(EPOCHS):
-    memory, memory_step = reset_memory(num_layers=3)
+    memory, memory_step = reset_memory(num_layers=4)
     targets, new_targets, rewards, ep_values, new_ep_values = [], [], [], [], []
     ep_rewards = 0
     done = False

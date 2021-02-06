@@ -1,7 +1,7 @@
 import numpy as np
 import time
 from random import uniform
-import cv2
+import gym
 
 
 class bcolors:
@@ -14,116 +14,6 @@ class bcolors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
-
-
-class Player:
-    def __init__(self, pos):
-        """ Starting position in the center of the screen """
-        self.x = pos[0]
-        self.y = pos[1]
-
-    def __str__(self):
-        return f"[{self.x}, {self.y}]"
-
-    def __eq__(self, other):
-        return self.x == other.x and self.y == other.y
-
-    def __sub__(self, other):
-        return (self.x - other.x, self.y - other.y)
-
-    def move(self, action, SIZE):
-        if action == 0:
-            self.x += 1
-        if action == 1:
-            self.x -= 1
-        if action == 2:
-            self.y += 1
-        if action == 3:
-            self.y -= 1
-
-        if self.x < 0:
-            self.x = 0
-        elif self.x > SIZE - 1:
-            self.x = SIZE - 1
-        if self.y < 0:
-            self.y = 0
-        elif self.y > SIZE - 1:
-            self.y = SIZE - 1
-
-
-class GameEnvironment:
-    SIZE = 10
-    PLAYER_N = 175
-    PLAYER_N_1D = 50
-    PLAYER_POS = (0, 0)
-    GOAL_N = 100
-    GOAL_POS = (SIZE // 2, SIZE // 2)
-    NUM_ENEMIES = 5 # change to make the environment contain enemies
-    positions = {}
-    for i in range(NUM_ENEMIES):
-        positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
-    ENEMY_N = 255
-
-
-    def reset(self):
-        self.player = Player(self.PLAYER_POS)
-        self.enemies = {}
-        for i in range(self.NUM_ENEMIES):
-            self.enemies[f'Enemy{i}'] = Player(self.positions[f'{i}'])
-        self.episode_step = 0
-
-        obs = self.get_observation()
-
-        return obs
-
-    def step(self, action):
-        self.player.move(action, self.SIZE)
-        self.episode_step += 1
-
-        obs = self.get_observation()
-
-        env = np.zeros((self.SIZE, self.SIZE),dtype=np.float)
-
-        for i in range(self.NUM_ENEMIES):
-            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
-
-        if env[self.player.x, self.player.y] == 255:
-            reward = -1.0
-            done = True
-        elif (self.player.x, self.player.y) == self.GOAL_POS:
-            reward = 1.0
-            done = True
-        else:
-            reward = 0.0
-            done = False
-
-        if self.episode_step >= 100:
-            reward = -1.0
-            done = True
-
-        return obs, reward, done
-
-    def get_observation(self):
-        env = np.zeros((self.SIZE, self.SIZE), dtype=np.float)
-
-        env[self.GOAL_POS] = self.GOAL_N
-        for i in range(self.NUM_ENEMIES):
-            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
-        env[self.player.x][self.player.y] = self.PLAYER_N_1D
-
-        return env
-
-    def render(self):
-        env = np.zeros((self.SIZE, self.SIZE, 3),dtype=np.float)
-
-        env[self.GOAL_POS] = [0, self.GOAL_N, 0]
-        for i in range(self.NUM_ENEMIES):
-            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = [0, 0, self.ENEMY_N]
-        env[self.player.x][self.player.y] = [self.PLAYER_N, 0, 0]
-
-        img = cv2.resize(env, (600, 600), interpolation=cv2.INTER_AREA)
-        cv2.imshow("Own Network Env", img)
-        cv2.waitKey(20)
 
 
 def discount_rewards(r, gamma):
@@ -190,23 +80,25 @@ def init_grad_buffer(model):
     return grad_buffer
 
 
-class ReplayMemory:
-    def __init__(self, batch_size, max_size):
+class PrioritizedReplayMemory:
+    def __init__(self, batch_size, max_size, alpha=0.8, epsilon=0.01):
         self.size = 0
         self.batch_size = batch_size
         self.max_size = max_size
-        self.keys = ['states', 'actions', 'rewards', 'new_states', 'dones']
+        self.keys = ['states', 'actions', 'rewards', 'new_states', 'dones', 'priorities']
         self.head = -1
         self.reset()
+        self.alpha = np.full((1, ), alpha)
+        self.epsilon = np.full((1, ), epsilon)
 
     def reset(self):
         for k in self.keys:
             setattr(self, k, [None] * self.max_size)
         self.size = 0
         self.head = -1
-        # self.buffer.clear()
+        self.tree = SumTree(self.max_size)
 
-    def add_experience(self, states, actions, rewards, new_states, dones):
+    def add_experience(self, states, actions, rewards, new_states, dones, error=10_000):
         for i in range(len(states)):
             self.head = (self.head + 1) % self.max_size
             self.states[self.head] = states[i].astype(np.float16)
@@ -214,16 +106,40 @@ class ReplayMemory:
             self.rewards[self.head] = rewards[i]
             self.new_states[self.head] = new_states[i].astype(np.float16)
             self.dones[self.head] = dones[i]
+            priority = self.get_priority(error)
+            self.priorities[self.head] = priority
+            self.tree.add(priority, self.head)
 
             if self.size < self.max_size:
                 self.size += 1
 
-    def sample_index(self):
-        batch_index = np.random.randint(self.size, size=self.batch_size, dtype=np.int)
+    def get_priority(self, error):
+        return np.power(error + self.epsilon, self.alpha)
+
+    def update_priorities(self, errors):
+        priorities = self.get_priority(errors)
+        assert len(priorities) == self.batch_index.size
+        for index, p in zip(self.batch_index, priorities):
+            self.priorities[index] = p
+        for p, i in zip(priorities, self.tree_index):
+            self.tree.update(i, p)
+
+    def sample_index(self, batch_size):
+        batch_index = np.zeros(batch_size)
+        tree_index = np.zeros(batch_size, dtype=np.int)
+
+        for i in range(batch_size):
+            s = uniform(0, self.tree.total())
+            (tree_idx, p, idx) = self.tree.get(s)
+            batch_index[i] = idx
+            tree_index[i] = tree_idx
+
+        batch_index = np.asarray(batch_index).astype(int)
+        self.tree_index = tree_index
         return batch_index
 
     def sample(self):
-        self.batch_index = self.sample_index()
+        self.batch_index = self.sample_index(self.batch_size)
         # print(f"batch index: {self.batch_index}")
         batch = {}
         for k in self.keys:
@@ -234,6 +150,71 @@ class ReplayMemory:
             else:
                 batch[k] = np.array(getattr(self, k))[self.batch_index]
         return batch
+
+
+class SumTree:
+    '''
+    Helper class for PrioritizedReplay
+
+    This implementation is, with minor adaptations, Jaromír Janisch's. The license is reproduced below.
+    For more information see his excellent blog series "Let's make a DQN" https://jaromiru.com/2016/09/27/lets-make-a-dqn-theory/
+
+    MIT License
+
+    Copyright (c) 2018 Jaromír Janisch
+    '''
+    write = 0
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.tree = np.zeros(2 * capacity - 1)  # Stores the priorities and sums of priorities
+        self.indices = np.zeros(capacity)  # Stores the indices of the experiences
+
+    def _propagate(self, idx, change):
+        parent = (idx - 1) // 2
+
+        self.tree[parent] += change
+
+        if parent != 0:
+            self._propagate(parent, change)
+
+    def _retrieve(self, idx, s):
+        left = 2 * idx + 1
+        right = left + 1
+
+        if left >= len(self.tree):
+            return idx
+
+        if s <= self.tree[left]:
+            return self._retrieve(left, s)
+        else:
+            return self._retrieve(right, s - self.tree[left])
+
+    def total(self):
+        return self.tree[0]
+
+    def add(self, p, index):
+        idx = self.write + self.capacity - 1
+
+        self.indices[self.write] = index
+        self.update(idx, p)
+
+        self.write += 1
+        if self.write >= self.capacity:
+            self.write = 0
+
+    def update(self, idx, p):
+        change = p - self.tree[idx]
+
+        self.tree[idx] = p
+        self._propagate(idx, change)
+
+    def get(self, s):
+        assert s <= self.total()
+        idx = self._retrieve(0, s)
+        indexIdx = idx - self.capacity + 1
+
+        return (idx, self.tree[idx], self.indices[indexIdx])
 
 
 def forward(inputs, net):
@@ -372,7 +353,7 @@ grad_buffer = init_grad_buffer(base_model)
 """ Training Params """
 EPOCHS = 50000
 batch_size = 512
-min_memory_size = 5_000
+min_memory_size = 50_000
 lr = 0.001
 gamma = 0.92
 epsilon = 0.9
@@ -388,7 +369,7 @@ render = True
 DoubleDQN = True
 
 optimizer = Adam(base_model, lr=lr)
-replay_memory = ReplayMemory(batch_size=batch_size, max_size=500_000)
+replay_memory = PrioritizedReplayMemory(batch_size=batch_size, max_size=500_000)
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
@@ -481,6 +462,9 @@ for epoch in range(EPOCHS):
         act_target_qs = rewards + gamma * (1 - dones) * act_target_qs
         target_qs = actual_qs.copy()
         target_qs[range(samples), batch['actions']] = act_target_qs
+
+        errors = np.abs(act_target_qs - actual_qs[range(samples), batch['actions']])
+        replay_memory.update_priorities(errors)
 
         loss = loss_fun(actual_qs, target_qs)
         if epoch == 0:

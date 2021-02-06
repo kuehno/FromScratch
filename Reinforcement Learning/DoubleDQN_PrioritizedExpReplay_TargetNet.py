@@ -3,8 +3,6 @@ import time
 from random import uniform
 import cv2
 
-""" TODO: Gradient Check korrigieren """
-
 
 class bcolors:
     HEADER = '\033[95m'

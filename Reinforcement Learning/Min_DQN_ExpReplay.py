@@ -64,8 +64,6 @@ class GameEnvironment:
     positions = {}
     for i in range(NUM_ENEMIES):
         positions[f'{i}'] = (np.random.randint(1, SIZE - 1), np.random.randint(1, SIZE - 1))
-    ENEMY1_POS = (1, 2)
-    ENEMY2_POS = (2, 2)
     ENEMY_N = 255
 
     def reset(self):

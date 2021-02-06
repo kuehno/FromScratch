@@ -54,13 +54,13 @@ class Player:
 
 
 class GameEnvironment:
-    SIZE = 6
+    SIZE = 5
     PLAYER_N = 175
     PLAYER_N_1D = 50
     PLAYER_POS = (0, 0)
     GOAL_N = 100
-    GOAL_POS = (SIZE - 1, SIZE - 1)
-    NUM_ENEMIES = 0 # change to make the environment contain enemies
+    GOAL_POS = (SIZE // 2, SIZE // 2)
+    NUM_ENEMIES = 1 # change to make the environment contain enemies
     positions = {}
     for i in range(NUM_ENEMIES):
         positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
@@ -99,7 +99,7 @@ class GameEnvironment:
             reward = 0.0
             done = False
 
-        if self.episode_step >= 50:
+        if self.episode_step >= 100:
             reward = -1.0
             done = True
 
@@ -123,102 +123,7 @@ class GameEnvironment:
             env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = [0, 0, self.ENEMY_N]
         env[self.player.x][self.player.y] = [self.PLAYER_N, 0, 0]
 
-        img = cv2.resize(env, (400, 400), interpolation=cv2.INTER_AREA)
-        cv2.imshow("Own Network Env", img)
-        cv2.waitKey(20)
-
-
-class GameEnvironmentDiscrete:
-    """ In this Environment a discrete reward is given for every cell """
-    SIZE = 6
-    PLAYER_N = 175
-    PLAYER_N_1D = 50
-    PLAYER_POS = (0, 0)
-    GOAL_N = 100
-    GOAL_POS = (SIZE - 1, SIZE - 1)
-    GOAL_REWARD = 1
-    DISCOUNT = 0.9
-    NUM_ENEMIES = 3 # change to make the environment contain enemies
-    positions = {}
-    for i in range(NUM_ENEMIES):
-        positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
-    ENEMY_N = 255
-
-    reward_table = np.zeros((SIZE, SIZE))
-    reward_table[GOAL_POS] = GOAL_REWARD
-
-    step = 0
-    for i in reversed(range(SIZE)):
-        iii = 0
-        for ii in reversed(range(SIZE - step)):
-            reward_table[i][ii] = GOAL_REWARD * DISCOUNT ** (iii + step)
-            iii += 1
-        iii = 0
-        for ii in reversed(range(SIZE - step)):
-            reward_table[ii][i] = GOAL_REWARD * DISCOUNT ** (iii + step)
-            iii += 1
-        step += 1
-
-    reward_table /= 10
-
-
-    def reset(self):
-        self.player = Player(self.PLAYER_POS)
-        self.enemies = {}
-        for i in range(self.NUM_ENEMIES):
-            self.enemies[f'Enemy{i}'] = Player(self.positions[f'{i}'])
-        self.episode_step = 0
-
-        obs = self.get_observation()
-
-        return obs
-
-    def step(self, action):
-        self.player.move(action, self.SIZE)
-        self.episode_step += 1
-
-        obs = self.get_observation()
-
-        env = np.zeros((self.SIZE, self.SIZE),dtype=np.float)
-
-        for i in range(self.NUM_ENEMIES):
-            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
-
-        if env[self.player.x, self.player.y] == 255:
-            reward = -1.0
-            done = True
-        elif (self.player.x, self.player.y) == self.GOAL_POS:
-            reward = 1.0
-            done = True
-        else:
-            reward = self.reward_table[self.player.x, self.player.y]
-            done = False
-
-        if self.episode_step >= 50:
-            reward = -1.0
-            done = True
-
-        return obs, reward, done
-
-    def get_observation(self):
-        env = np.zeros((self.SIZE, self.SIZE), dtype=np.float)
-
-        env[self.GOAL_POS] = self.GOAL_N
-        for i in range(self.NUM_ENEMIES):
-            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
-        env[self.player.x][self.player.y] = self.PLAYER_N_1D
-
-        return env
-
-    def render(self):
-        env = np.zeros((self.SIZE, self.SIZE, 3),dtype=np.float)
-
-        env[self.GOAL_POS] = [0, self.GOAL_N, 0]
-        for i in range(self.NUM_ENEMIES):
-            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = [0, 0, self.ENEMY_N]
-        env[self.player.x][self.player.y] = [self.PLAYER_N, 0, 0]
-
-        img = cv2.resize(env, (400, 400), interpolation=cv2.INTER_AREA)
+        img = cv2.resize(env, (600, 600), interpolation=cv2.INTER_AREA)
         cv2.imshow("Own Network Env", img)
         cv2.waitKey(20)
 
@@ -431,14 +336,14 @@ def check_grads(model, batch, q_target, grads):
                 print(f"{bcolors.OKGREEN}Your backward propagation works perfectly fine! difference = {rel_error}{bcolors.ENDC}")
 
 
-env = GameEnvironmentDiscrete()
+env = GameEnvironment()
 print(f"{bcolors.OKGREEN}\nInitial game state{bcolors.ENDC}")
 env.reset()
 env.render()
 time.sleep(2)
 
 """ Model Params """
-hidden_units = 100
+hidden_units = 64
 in_features = env.SIZE * env.SIZE
 out_features = 4
 
@@ -461,13 +366,13 @@ grad_buffer = init_grad_buffer(model)
 
 """ Training Params """
 EPOCHS = 50000
-batch_size = 256
-min_memory_size = 50_000
-lr = 0.0002
-gamma = 0.99
+batch_size = 512
+min_memory_size = 5_000
+lr = 0.001
+gamma = 0.92
 epsilon = 0.9
-min_epsilon = 0.05
-epsilon_decay = 0.998
+min_epsilon = 0.01
+epsilon_decay = 0.999
 smooth_rewards = 0
 smooth_loss = 0
 step = 0
@@ -477,7 +382,6 @@ render = True
 
 optimizer = Adam(model, lr=lr)
 replay_memory = ReplayMemory(batch_size=batch_size, max_size=500_000)
-
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
@@ -500,12 +404,9 @@ for epoch in range(EPOCHS):
 
         _, new_values = forward(new_obs)
 
-        #if smooth_rewards > 15.95 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
-        if epoch >= 1500 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
-            print(f"predicted values: {values}")
-            print(f"reward table: {env.reward_table}")
+        if smooth_rewards > 0.95 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
+            # print(f"values: {values}")
             env.render()
-            time.sleep(1)
 
         observations.append(obs)
         actions.append(action)
@@ -520,8 +421,6 @@ for epoch in range(EPOCHS):
     rewards = np.hstack(rewards)
     new_observations = np.vstack(new_observations)
     dones = np.hstack(dones)
-
-    # rewards = discount_rewards(rewards, gamma=gamma)
 
     replay_memory.add_experience(observations, actions, rewards, new_observations, dones)
 

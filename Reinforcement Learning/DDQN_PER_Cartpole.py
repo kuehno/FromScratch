@@ -16,21 +16,6 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 
-def discount_rewards(r, gamma):
-    """ take 1D float array of rewards and compute discounted reward """
-    discounted_r = np.zeros_like(r, dtype=np.float32)
-    running_add = 0
-    for t in reversed(range(len(r))):
-        running_add = running_add * gamma + r[t]
-        discounted_r[t] = running_add
-    return discounted_r
-
-
-def prepro(x):
-    """ preprocessing for images only"""
-    return x.astype(np.float).ravel() / 255
-
-
 def relu(x):
     return np.maximum(0, x)
 
@@ -333,7 +318,7 @@ def init_model(hidden_dim, in_dim, out_dim):
     return {'W1': W1, 'Bias_W1': Bias_W1, 'W2': W2, 'Bias_W2': Bias_W2, 'W3': W3, 'Bias_W3': Bias_W3, 'W4': W4, 'Bias_W4': Bias_W4}
 
 
-env = GameEnvironment()
+env = gym.make('CartPole-v0')
 print(f"{bcolors.OKGREEN}\nInitial game state{bcolors.ENDC}")
 env.reset()
 env.render()
@@ -341,8 +326,8 @@ time.sleep(2)
 
 """ Model Params """
 hidden_units = 100
-in_features = env.SIZE * env.SIZE
-out_features = 4
+in_features = 4
+out_features = env.action_space.n
 
 base_model = init_model(hidden_dim=hidden_units, in_dim=in_features, out_dim=out_features)
 target_model = base_model.copy()
@@ -352,13 +337,13 @@ grad_buffer = init_grad_buffer(base_model)
 
 """ Training Params """
 EPOCHS = 50000
-batch_size = 512
-min_memory_size = 50_000
+batch_size = 200
+min_memory_size = 5_000
 lr = 0.001
-gamma = 0.92
-epsilon = 0.9
-min_epsilon = 0.01
-epsilon_decay = 0.999
+gamma = 0.99 # discount factor
+epsilon = 0.99 # randomness of actions
+min_epsilon = 0.02
+epsilon_decay = 0.995
 smooth_rewards = 0
 smooth_loss = 0
 step = 0
@@ -369,7 +354,7 @@ render = True
 DoubleDQN = True
 
 optimizer = Adam(base_model, lr=lr)
-replay_memory = PrioritizedReplayMemory(batch_size=batch_size, max_size=500_000)
+replay_memory = PrioritizedReplayMemory(batch_size=batch_size, max_size=200_000)
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
@@ -378,21 +363,21 @@ for epoch in range(EPOCHS):
     observations, actions, rewards, new_observations, dones = [], [], [], [], []
     ep_rewards = 0
     done = False
-    obs = prepro(env.reset())
+    obs = env.reset()
     while not done:
         hidden, values = forward(obs, base_model)
         if np.random.rand() > epsilon:
             action = np.argmax(values)
         else:
-            action = np.random.randint(0, 4)
+            action = np.random.randint(0, env.action_space.n)
 
-        new_obs, reward, done = env.step(action)
-        new_obs = prepro(new_obs)
+        new_obs, reward, done, _ = env.step(action)
+        new_obs = new_obs
         ep_rewards += reward
 
         _, new_values = forward(new_obs, base_model)
 
-        if smooth_rewards > 0.95 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
+        if smooth_rewards > 195 and render:
             # print(f"values: {values}")
             env.render()
 
@@ -477,7 +462,7 @@ for epoch in range(EPOCHS):
         grads = backward(actual_qs, hidden, target_qs, base_model)
 
         for k, v in grad_buffer.items():
-            grads[k] = np.clip(grads[k], -5, 5)
+            grads[k] = np.clip(grads[k], -2, 2)
             grad_buffer[k] += grads[k]
 
         step += 1

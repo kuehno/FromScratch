@@ -54,20 +54,19 @@ class Player:
 
 
 class GameEnvironment:
-    SIZE = 10
+    SIZE = 6
     PLAYER_N = 175
     PLAYER_N_1D = 50
     PLAYER_POS = (0, 0)
     GOAL_N = 100
     GOAL_POS = (SIZE - 1, SIZE - 1)
-    NUM_ENEMIES = 2 # change to make the environment contain enemies
+    NUM_ENEMIES = 0  # change to make the environment contain enemies
     positions = {}
     for i in range(NUM_ENEMIES):
-        positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
+        positions[f'{i}'] = (np.random.randint(1, SIZE - 1), np.random.randint(1, SIZE - 1))
     ENEMY1_POS = (1, 2)
     ENEMY2_POS = (2, 2)
     ENEMY_N = 255
-
 
     def reset(self):
         self.player = Player(self.PLAYER_POS)
@@ -86,7 +85,7 @@ class GameEnvironment:
 
         obs = self.get_observation()
 
-        env = np.zeros((self.SIZE, self.SIZE),dtype=np.float)
+        env = np.zeros((self.SIZE, self.SIZE), dtype=np.float)
 
         for i in range(self.NUM_ENEMIES):
             env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
@@ -98,10 +97,10 @@ class GameEnvironment:
             reward = 1.0
             done = True
         else:
-            reward = 0.05
+            reward = 0.0
             done = False
 
-        if self.episode_step >= 200:
+        if self.episode_step >= 50:
             reward = -1.0
             done = True
 
@@ -118,7 +117,7 @@ class GameEnvironment:
         return env
 
     def render(self):
-        env = np.zeros((self.SIZE, self.SIZE, 3),dtype=np.float)
+        env = np.zeros((self.SIZE, self.SIZE, 3), dtype=np.float)
 
         env[self.GOAL_POS] = [0, self.GOAL_N, 0]
         for i in range(self.NUM_ENEMIES):
@@ -210,16 +209,17 @@ class ReplayMemory:
         self.head = -1
         # self.buffer.clear()
 
-    def add_experience(self, state, action, reward, new_state, done):
-        self.head = (self.head +1) % self.max_size
-        self.states[self.head] = state.astype(np.float16)
-        self.actions[self.head] = action
-        self.rewards[self.head] = reward
-        self.new_states[self.head] = new_state.astype(np.float16)
-        self.dones[self.head] = done
+    def add_experience(self, states, actions, rewards, new_states, dones):
+        for i in range(len(states)):
+            self.head = (self.head + 1) % self.max_size
+            self.states[self.head] = states[i].astype(np.float16)
+            self.actions[self.head] = actions[i]
+            self.rewards[self.head] = rewards[i]
+            self.new_states[self.head] = new_states[i].astype(np.float16)
+            self.dones[self.head] = dones[i]
 
-        if self.size < self.max_size:
-            self.size += 1
+            if self.size < self.max_size:
+                self.size += 1
 
     def sample_index(self):
         batch_index = np.random.randint(self.size, size=self.batch_size, dtype=np.int)
@@ -332,9 +332,11 @@ def check_grads(model, batch, q_target, grads):
                 rel_error = abs(grad_analytic - grad_numerical) / abs(grad_numerical + grad_analytic)
 
             if rel_error > delta:
-                print(f"{bcolors.FAIL}There might be a mistake in backward propagation! difference = {rel_error}{bcolors.ENDC}")
+                print(
+                    f"{bcolors.FAIL}There might be a mistake in backward propagation! difference = {rel_error}{bcolors.ENDC}")
             else:
-                print(f"{bcolors.OKGREEN}Your backward propagation works perfectly fine! difference = {rel_error}{bcolors.ENDC}")
+                print(
+                    f"{bcolors.OKGREEN}Your backward propagation works perfectly fine! difference = {rel_error}{bcolors.ENDC}")
 
 
 env = GameEnvironment()
@@ -349,27 +351,29 @@ in_features = env.SIZE * env.SIZE
 out_features = 4
 
 """ Weight Initialization """
-W1 = np.random.randn(hidden_units, in_features) / np.sqrt(in_features) # Xavier Initialization
+W1 = np.random.randn(hidden_units, in_features) / np.sqrt(in_features)  # Xavier Initialization
 W1 = W1.T
 Bias_W1 = np.array([np.zeros(hidden_units)])
-W2 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
+W2 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units)  # Xavier Initialization
 W2 = W2.T
 Bias_W2 = np.array([np.zeros(hidden_units)])
-W3 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
+W3 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units)  # Xavier Initialization
 W3 = W3.T
 Bias_W3 = np.array([np.zeros(hidden_units)])
-W4 = np.random.randn(out_features, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
+W4 = np.random.randn(out_features, hidden_units) / np.sqrt(hidden_units)  # Xavier Initialization
 W4 = W4.T
 Bias_W4 = np.array([np.zeros(out_features)])
 
-model = {'W1': W1, 'Bias_W1': Bias_W1, 'W2': W2, 'Bias_W2': Bias_W2, 'W3': W3, 'Bias_W3': Bias_W3, 'W4': W4, 'Bias_W4': Bias_W4}
+model = {'W1': W1, 'Bias_W1': Bias_W1, 'W2': W2, 'Bias_W2': Bias_W2, 'W3': W3, 'Bias_W3': Bias_W3, 'W4': W4,
+         'Bias_W4': Bias_W4}
 grad_buffer = init_grad_buffer(model)
 
 """ Training Params """
 EPOCHS = 50000
-batch_size = 256
-min_memory_size = 5000
-lr = 0.0002
+batch_size = 512
+min_memory_size = 50_000
+lr = 0.002
+gamma = 0.9
 epsilon = 0.9
 min_epsilon = 0.05
 epsilon_decay = 0.998
@@ -377,17 +381,17 @@ smooth_rewards = 0
 smooth_loss = 0
 step = 0
 update_every = 1
-check_gradients = True
+check_gradients = False
 render = True
 
 optimizer = Adam(model, lr=lr)
-replay_memory = ReplayMemory(batch_size=batch_size, max_size=50_000)
-
+replay_memory = ReplayMemory(batch_size=batch_size, max_size=500_000)
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
 
 for epoch in range(EPOCHS):
+    observations, actions, rewards, new_observations, dones = [], [], [], [], []
     ep_rewards = 0
     done = False
     obs = prepro(env.reset())
@@ -404,12 +408,26 @@ for epoch in range(EPOCHS):
 
         _, new_values = forward(new_obs)
 
-        if smooth_rewards > 8.99 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
+        if smooth_rewards > 0.95 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
             env.render()
 
-        replay_memory.add_experience(obs, action, reward, new_obs, done)
+        observations.append(obs)
+        actions.append(action)
+        rewards.append(reward)
+        new_observations.append(new_obs)
+        dones.append(done)
 
         obs = new_obs
+
+    observations = np.vstack(observations)
+    actions = np.hstack(actions)
+    rewards = np.hstack(rewards)
+    new_observations = np.vstack(new_observations)
+    dones = np.hstack(dones)
+
+    rewards = discount_rewards(rewards, gamma=gamma)
+
+    replay_memory.add_experience(observations, actions, rewards, new_observations, dones)
 
     if epsilon > min_epsilon:
         epsilon *= epsilon_decay
@@ -429,7 +447,7 @@ for epoch in range(EPOCHS):
 
             act_target_qs = np.max(target_qs, axis=1)
             dones = batch['dones']
-            act_target_qs = rewards + 0.99 * (1 - dones) * act_target_qs
+            act_target_qs = rewards + gamma * (1 - dones) * act_target_qs
             target_qs = actual_qs.copy()
             target_qs[range(samples), batch['actions']] = act_target_qs
 
@@ -448,21 +466,10 @@ for epoch in range(EPOCHS):
 
         rewards = batch['rewards']
 
-        # rewards = []
-        # discounted_reward = 0
-        # for reward, is_terminal in zip(reversed(batch['rewards']), reversed(batch['dones'])):
-        #     if is_terminal == 1:
-        #         discounted_reward = 0
-        #     discounted_reward = reward + (0.99 * discounted_reward)
-        #     rewards.insert(0, discounted_reward)
-
-        # rewards -= np.mean(rewards)
-        # rewards /= np.std(rewards)
-
         act_target_qs = np.max(target_qs, axis=1)
 
         dones = batch['dones']
-        act_target_qs = rewards + 0.99 * (1 - dones) * act_target_qs
+        act_target_qs = rewards + gamma * (1 - dones) * act_target_qs
 
         target_qs = actual_qs.copy()
         target_qs[range(samples), batch['actions']] = act_target_qs
@@ -478,7 +485,7 @@ for epoch in range(EPOCHS):
         grads = backward(actual_qs, hidden, target_qs)
 
         for k, v in grad_buffer.items():
-            grads[k] = np.clip(grads[k], -1, 1)
+            grads[k] = np.clip(grads[k], -5, 5)
             grad_buffer[k] += grads[k]
 
         step += 1

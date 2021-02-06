@@ -192,23 +192,25 @@ def init_grad_buffer(model):
     return grad_buffer
 
 
-class ReplayMemory:
-    def __init__(self, batch_size, max_size):
+class PrioritizedReplayMemory:
+    def __init__(self, batch_size, max_size, alpha=0.8, epsilon=0.01):
         self.size = 0
         self.batch_size = batch_size
         self.max_size = max_size
-        self.keys = ['states', 'actions', 'rewards', 'new_states', 'dones']
+        self.keys = ['states', 'actions', 'rewards', 'new_states', 'dones', 'priorities']
         self.head = -1
         self.reset()
+        self.alpha = np.full((1, ), alpha)
+        self.epsilon = np.full((1, ), epsilon)
 
     def reset(self):
         for k in self.keys:
             setattr(self, k, [None] * self.max_size)
         self.size = 0
         self.head = -1
-        # self.buffer.clear()
+        self.tree = SumTree(self.max_size)
 
-    def add_experience(self, states, actions, rewards, new_states, dones):
+    def add_experience(self, states, actions, rewards, new_states, dones, error=10_000):
         for i in range(len(states)):
             self.head = (self.head + 1) % self.max_size
             self.states[self.head] = states[i].astype(np.float16)
@@ -216,16 +218,40 @@ class ReplayMemory:
             self.rewards[self.head] = rewards[i]
             self.new_states[self.head] = new_states[i].astype(np.float16)
             self.dones[self.head] = dones[i]
+            priority = self.get_priority(error)
+            self.priorities[self.head] = priority
+            self.tree.add(priority, self.head)
 
             if self.size < self.max_size:
                 self.size += 1
 
-    def sample_index(self):
-        batch_index = np.random.randint(self.size, size=self.batch_size, dtype=np.int)
+    def get_priority(self, error):
+        return np.power(error + self.epsilon, self.alpha)
+
+    def update_priorities(self, errors):
+        priorities = self.get_priority(errors)
+        assert len(priorities) == self.batch_index.size
+        for index, p in zip(self.batch_index, priorities):
+            self.priorities[index] = p
+        for p, i in zip(priorities, self.tree_index):
+            self.tree.update(i, p)
+
+    def sample_index(self, batch_size):
+        batch_index = np.zeros(batch_size)
+        tree_index = np.zeros(batch_size, dtype=np.int)
+
+        for i in range(batch_size):
+            s = uniform(0, self.tree.total())
+            (tree_idx, p, idx) = self.tree.get(s)
+            batch_index[i] = idx
+            tree_index[i] = tree_idx
+
+        batch_index = np.asarray(batch_index).astype(int)
+        self.tree_index = tree_index
         return batch_index
 
     def sample(self):
-        self.batch_index = self.sample_index()
+        self.batch_index = self.sample_index(self.batch_size)
         # print(f"batch index: {self.batch_index}")
         batch = {}
         for k in self.keys:
@@ -236,6 +262,71 @@ class ReplayMemory:
             else:
                 batch[k] = np.array(getattr(self, k))[self.batch_index]
         return batch
+
+
+class SumTree:
+    '''
+    Helper class for PrioritizedReplay
+
+    This implementation is, with minor adaptations, Jaromír Janisch's. The license is reproduced below.
+    For more information see his excellent blog series "Let's make a DQN" https://jaromiru.com/2016/09/27/lets-make-a-dqn-theory/
+
+    MIT License
+
+    Copyright (c) 2018 Jaromír Janisch
+    '''
+    write = 0
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.tree = np.zeros(2 * capacity - 1)  # Stores the priorities and sums of priorities
+        self.indices = np.zeros(capacity)  # Stores the indices of the experiences
+
+    def _propagate(self, idx, change):
+        parent = (idx - 1) // 2
+
+        self.tree[parent] += change
+
+        if parent != 0:
+            self._propagate(parent, change)
+
+    def _retrieve(self, idx, s):
+        left = 2 * idx + 1
+        right = left + 1
+
+        if left >= len(self.tree):
+            return idx
+
+        if s <= self.tree[left]:
+            return self._retrieve(left, s)
+        else:
+            return self._retrieve(right, s - self.tree[left])
+
+    def total(self):
+        return self.tree[0]
+
+    def add(self, p, index):
+        idx = self.write + self.capacity - 1
+
+        self.indices[self.write] = index
+        self.update(idx, p)
+
+        self.write += 1
+        if self.write >= self.capacity:
+            self.write = 0
+
+    def update(self, idx, p):
+        change = p - self.tree[idx]
+
+        self.tree[idx] = p
+        self._propagate(idx, change)
+
+    def get(self, s):
+        assert s <= self.total()
+        idx = self._retrieve(0, s)
+        indexIdx = idx - self.capacity + 1
+
+        return (idx, self.tree[idx], self.indices[indexIdx])
 
 
 def forward(inputs, net):
@@ -374,7 +465,7 @@ grad_buffer = init_grad_buffer(base_model)
 """ Training Params """
 EPOCHS = 50000
 batch_size = 512
-min_memory_size = 5_000
+min_memory_size = 50_000
 lr = 0.001
 gamma = 0.92
 epsilon = 0.9
@@ -390,7 +481,7 @@ render = True
 DoubleDQN = True
 
 optimizer = Adam(base_model, lr=lr)
-replay_memory = ReplayMemory(batch_size=batch_size, max_size=500_000)
+replay_memory = PrioritizedReplayMemory(batch_size=batch_size, max_size=500_000)
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
@@ -483,6 +574,9 @@ for epoch in range(EPOCHS):
         act_target_qs = rewards + gamma * (1 - dones) * act_target_qs
         target_qs = actual_qs.copy()
         target_qs[range(samples), batch['actions']] = act_target_qs
+
+        errors = np.abs(act_target_qs - actual_qs[range(samples), batch['actions']])
+        replay_memory.update_priorities(errors)
 
         loss = loss_fun(actual_qs, target_qs)
         if epoch == 0:

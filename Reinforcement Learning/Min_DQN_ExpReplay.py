@@ -60,7 +60,7 @@ class GameEnvironment:
     PLAYER_POS = (0, 0)
     GOAL_N = 100
     GOAL_POS = (SIZE - 1, SIZE - 1)
-    NUM_ENEMIES = 0 # change to make the environment contain enemies
+    NUM_ENEMIES = 2 # change to make the environment contain enemies
     positions = {}
     for i in range(NUM_ENEMIES):
         positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
@@ -98,7 +98,7 @@ class GameEnvironment:
             reward = 1.0
             done = True
         else:
-            reward = 0.0
+            reward = 0.05
             done = False
 
         if self.episode_step >= 200:
@@ -317,35 +317,13 @@ def check_grads(model, batch, q_target, grads):
             param.flat[ri] = old_val + delta
 
             _, actual_qs_plus = forward(batch['states'].copy())
-            target_qs_plus = q_target.copy()
-
-            samples = len(actual_qs_plus)
-
-            rewards = batch['rewards'].copy()
-
-            act_target_qs = np.max(target_qs_plus, axis=1)
-            dones = batch['dones'].copy()
-            act_target_qs = rewards + 0.99 * (1 - dones) * act_target_qs
-            target_qs_plus = actual_qs_plus.copy()
-            target_qs_plus[range(samples), batch['actions'].copy()] = act_target_qs
-            loss_plus = loss_fun(actual_qs_plus, target_qs_plus)
-
+            loss_plus = loss_fun(actual_qs_plus, q_target)
             param.flat[ri] = old_val - delta
+
             _, actual_qs_minus = forward(batch['states'].copy())
-            target_qs_minus = q_target.copy()
-
-            samples = len(actual_qs_minus)
-
-            rewards = batch['rewards'].copy()
-
-            act_target_qs = np.max(target_qs_minus, axis=1)
-            dones = batch['dones'].copy()
-            act_target_qs = rewards + 0.99 * (1 - dones) * act_target_qs
-            target_qs_minus = actual_qs_minus.copy()
-            target_qs_minus[range(samples), batch['actions'].copy()] = act_target_qs
-
-            loss_minus = loss_fun(actual_qs_minus, target_qs_minus)
+            loss_minus = loss_fun(actual_qs_minus, q_target)
             param.flat[ri] = old_val  # reset old value
+
             grad_analytic = dparam.flat[ri]
             grad_numerical = (loss_plus - loss_minus) / (2 * delta)
             if grad_analytic == 0.0 and grad_numerical == 0.0:
@@ -366,7 +344,7 @@ env.render()
 time.sleep(2)
 
 """ Model Params """
-hidden_units = 64
+hidden_units = 100
 in_features = env.SIZE * env.SIZE
 out_features = 4
 
@@ -390,10 +368,11 @@ grad_buffer = init_grad_buffer(model)
 """ Training Params """
 EPOCHS = 50000
 batch_size = 256
+min_memory_size = 5000
 lr = 0.0002
 epsilon = 0.9
 min_epsilon = 0.05
-epsilon_decay = 0.995
+epsilon_decay = 0.998
 smooth_rewards = 0
 smooth_loss = 0
 step = 0
@@ -425,7 +404,7 @@ for epoch in range(EPOCHS):
 
         _, new_values = forward(new_obs)
 
-        if smooth_rewards > 0.99 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
+        if smooth_rewards > 8.99 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
             env.render()
 
         replay_memory.add_experience(obs, action, reward, new_obs, done)
@@ -437,7 +416,7 @@ for epoch in range(EPOCHS):
     else:
         epsilon = min_epsilon
 
-    if replay_memory.size >= batch_size:
+    if replay_memory.size >= min_memory_size:
         if check_gradients:
             batch = replay_memory.sample()
 

@@ -60,11 +60,12 @@ class GameEnvironment:
     PLAYER_POS = (0, 0)
     GOAL_N = 100
     GOAL_POS = (SIZE - 1, SIZE - 1)
-    NUM_ENEMIES = 0  # change to make the environment contain enemies
+    NUM_ENEMIES = 0 # change to make the environment contain enemies
     positions = {}
     for i in range(NUM_ENEMIES):
-        positions[f'{i}'] = (np.random.randint(1, SIZE - 1), np.random.randint(1, SIZE - 1))
+        positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
     ENEMY_N = 255
+
 
     def reset(self):
         self.player = Player(self.PLAYER_POS)
@@ -83,7 +84,7 @@ class GameEnvironment:
 
         obs = self.get_observation()
 
-        env = np.zeros((self.SIZE, self.SIZE), dtype=np.float)
+        env = np.zeros((self.SIZE, self.SIZE),dtype=np.float)
 
         for i in range(self.NUM_ENEMIES):
             env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
@@ -115,7 +116,102 @@ class GameEnvironment:
         return env
 
     def render(self):
-        env = np.zeros((self.SIZE, self.SIZE, 3), dtype=np.float)
+        env = np.zeros((self.SIZE, self.SIZE, 3),dtype=np.float)
+
+        env[self.GOAL_POS] = [0, self.GOAL_N, 0]
+        for i in range(self.NUM_ENEMIES):
+            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = [0, 0, self.ENEMY_N]
+        env[self.player.x][self.player.y] = [self.PLAYER_N, 0, 0]
+
+        img = cv2.resize(env, (400, 400), interpolation=cv2.INTER_AREA)
+        cv2.imshow("Own Network Env", img)
+        cv2.waitKey(20)
+
+
+class GameEnvironmentDiscrete:
+    """ In this Environment a discrete reward is given for every cell """
+    SIZE = 6
+    PLAYER_N = 175
+    PLAYER_N_1D = 50
+    PLAYER_POS = (0, 0)
+    GOAL_N = 100
+    GOAL_POS = (SIZE - 1, SIZE - 1)
+    GOAL_REWARD = 1
+    DISCOUNT = 0.9
+    NUM_ENEMIES = 3 # change to make the environment contain enemies
+    positions = {}
+    for i in range(NUM_ENEMIES):
+        positions[f'{i}'] = (np.random.randint(1, SIZE-1), np.random.randint(1, SIZE-1))
+    ENEMY_N = 255
+
+    reward_table = np.zeros((SIZE, SIZE))
+    reward_table[GOAL_POS] = GOAL_REWARD
+
+    step = 0
+    for i in reversed(range(SIZE)):
+        iii = 0
+        for ii in reversed(range(SIZE - step)):
+            reward_table[i][ii] = GOAL_REWARD * DISCOUNT ** (iii + step)
+            iii += 1
+        iii = 0
+        for ii in reversed(range(SIZE - step)):
+            reward_table[ii][i] = GOAL_REWARD * DISCOUNT ** (iii + step)
+            iii += 1
+        step += 1
+
+    reward_table /= 10
+
+
+    def reset(self):
+        self.player = Player(self.PLAYER_POS)
+        self.enemies = {}
+        for i in range(self.NUM_ENEMIES):
+            self.enemies[f'Enemy{i}'] = Player(self.positions[f'{i}'])
+        self.episode_step = 0
+
+        obs = self.get_observation()
+
+        return obs
+
+    def step(self, action):
+        self.player.move(action, self.SIZE)
+        self.episode_step += 1
+
+        obs = self.get_observation()
+
+        env = np.zeros((self.SIZE, self.SIZE),dtype=np.float)
+
+        for i in range(self.NUM_ENEMIES):
+            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
+
+        if env[self.player.x, self.player.y] == 255:
+            reward = -1.0
+            done = True
+        elif (self.player.x, self.player.y) == self.GOAL_POS:
+            reward = 1.0
+            done = True
+        else:
+            reward = self.reward_table[self.player.x, self.player.y]
+            done = False
+
+        if self.episode_step >= 50:
+            reward = -1.0
+            done = True
+
+        return obs, reward, done
+
+    def get_observation(self):
+        env = np.zeros((self.SIZE, self.SIZE), dtype=np.float)
+
+        env[self.GOAL_POS] = self.GOAL_N
+        for i in range(self.NUM_ENEMIES):
+            env[(self.enemies[f"Enemy{i}"].x, self.enemies[f"Enemy{i}"].y)] = self.ENEMY_N
+        env[self.player.x][self.player.y] = self.PLAYER_N_1D
+
+        return env
+
+    def render(self):
+        env = np.zeros((self.SIZE, self.SIZE, 3),dtype=np.float)
 
         env[self.GOAL_POS] = [0, self.GOAL_N, 0]
         for i in range(self.NUM_ENEMIES):
@@ -330,14 +426,12 @@ def check_grads(model, batch, q_target, grads):
                 rel_error = abs(grad_analytic - grad_numerical) / abs(grad_numerical + grad_analytic)
 
             if rel_error > delta:
-                print(
-                    f"{bcolors.FAIL}There might be a mistake in backward propagation! difference = {rel_error}{bcolors.ENDC}")
+                print(f"{bcolors.FAIL}There might be a mistake in backward propagation! difference = {rel_error}{bcolors.ENDC}")
             else:
-                print(
-                    f"{bcolors.OKGREEN}Your backward propagation works perfectly fine! difference = {rel_error}{bcolors.ENDC}")
+                print(f"{bcolors.OKGREEN}Your backward propagation works perfectly fine! difference = {rel_error}{bcolors.ENDC}")
 
 
-env = GameEnvironment()
+env = GameEnvironmentDiscrete()
 print(f"{bcolors.OKGREEN}\nInitial game state{bcolors.ENDC}")
 env.reset()
 env.render()
@@ -349,29 +443,28 @@ in_features = env.SIZE * env.SIZE
 out_features = 4
 
 """ Weight Initialization """
-W1 = np.random.randn(hidden_units, in_features) / np.sqrt(in_features)  # Xavier Initialization
+W1 = np.random.randn(hidden_units, in_features) / np.sqrt(in_features) # Xavier Initialization
 W1 = W1.T
 Bias_W1 = np.array([np.zeros(hidden_units)])
-W2 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units)  # Xavier Initialization
+W2 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
 W2 = W2.T
 Bias_W2 = np.array([np.zeros(hidden_units)])
-W3 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units)  # Xavier Initialization
+W3 = np.random.randn(hidden_units, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
 W3 = W3.T
 Bias_W3 = np.array([np.zeros(hidden_units)])
-W4 = np.random.randn(out_features, hidden_units) / np.sqrt(hidden_units)  # Xavier Initialization
+W4 = np.random.randn(out_features, hidden_units) / np.sqrt(hidden_units) # Xavier Initialization
 W4 = W4.T
 Bias_W4 = np.array([np.zeros(out_features)])
 
-model = {'W1': W1, 'Bias_W1': Bias_W1, 'W2': W2, 'Bias_W2': Bias_W2, 'W3': W3, 'Bias_W3': Bias_W3, 'W4': W4,
-         'Bias_W4': Bias_W4}
+model = {'W1': W1, 'Bias_W1': Bias_W1, 'W2': W2, 'Bias_W2': Bias_W2, 'W3': W3, 'Bias_W3': Bias_W3, 'W4': W4, 'Bias_W4': Bias_W4}
 grad_buffer = init_grad_buffer(model)
 
 """ Training Params """
 EPOCHS = 50000
-batch_size = 512
+batch_size = 256
 min_memory_size = 50_000
-lr = 0.002
-gamma = 0.9
+lr = 0.0002
+gamma = 0.99
 epsilon = 0.9
 min_epsilon = 0.05
 epsilon_decay = 0.998
@@ -384,6 +477,7 @@ render = True
 
 optimizer = Adam(model, lr=lr)
 replay_memory = ReplayMemory(batch_size=batch_size, max_size=500_000)
+
 
 print(f"{bcolors.OKBLUE}\nStarting Training Phase{bcolors.ENDC}")
 time.sleep(2)
@@ -406,8 +500,12 @@ for epoch in range(EPOCHS):
 
         _, new_values = forward(new_obs)
 
-        if smooth_rewards > 0.95 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
+        #if smooth_rewards > 15.95 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
+        if epoch >= 1500 and render or smooth_rewards <= -0.99 and render and epoch >= 2000:
+            print(f"predicted values: {values}")
+            print(f"reward table: {env.reward_table}")
             env.render()
+            time.sleep(1)
 
         observations.append(obs)
         actions.append(action)
@@ -423,7 +521,7 @@ for epoch in range(EPOCHS):
     new_observations = np.vstack(new_observations)
     dones = np.hstack(dones)
 
-    rewards = discount_rewards(rewards, gamma=gamma)
+    # rewards = discount_rewards(rewards, gamma=gamma)
 
     replay_memory.add_experience(observations, actions, rewards, new_observations, dones)
 

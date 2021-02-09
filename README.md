@@ -7,5 +7,6 @@ Implementations include:
   - Reinforce (RL)
   - Sarsa (RL)
   - Actor Critic (RL)
+  - DQN and its variants (RL)
   
 For most of the implementations some basic examples are given. If there are still any questions, feel free to comment below / ask

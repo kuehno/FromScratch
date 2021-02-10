@@ -417,7 +417,7 @@ lr = 0.0005
 smooth_rewards = 0
 smooth_loss = 0
 step = 0
-update_every = 1
+update_every = 10
 check_gradients = False
 render = True
 
@@ -458,7 +458,7 @@ for epoch in range(EPOCHS):
         targets.append(action)
         rewards.append(reward)
 
-        if smooth_rewards >= 5.99 and render or smooth_rewards <= -0.9 and epoch > 9000 or epoch > 9000:
+        if smooth_rewards >= 0.9 and render or epoch > 9000 and render:
             env.render()
 
     targets = np.hstack(targets)
